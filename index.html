@@ -137,7 +137,7 @@
   </aside>
   <main id="main">
     <header id="topbar">
-      <div class="model-tag" id="modelTag">deepSeek v4.1</div>
+      <div class="model-tag" id="modelTag">deepSeek chat</div>
       <button id="gearBtn" class="gear" title="设置">⚙</button>
     </header>
     <div id="messages"></div>
@@ -157,7 +157,7 @@
     <div class="modal-title">设置</div>
     <label for="cfgKey">API Key</label>
     <input id="cfgKey" type="password" placeholder="sk-..." autocomplete="off">
-    <div class="modal-tip">模型：deepSeek chat · 接口：官方 <code>api.deepseek.com</code>（已内置）。密钥仅保存在本机浏览器。</div>
+    <div class="modal-tip">首次使用请先填你的 DeepSeek API Key（<code>sk-</code> 开头,从 platform.deepseek.com 获取）。模型：deepSeek chat · 接口：官方 <code>api.deepseek.com</code>（已内置）。密钥仅保存在本机浏览器,不会上传。</div>
     <div class="modal-actions">
       <button id="cfgSave" class="btn-primary">保存</button>
       <button id="cfgClose" class="btn-ghost">取消</button>
@@ -273,6 +273,14 @@ function addMsg(role){
   return bubble;
 }
 
+function showNotice(text){
+  var n = document.createElement('div');
+  n.style.cssText = 'max-width:760px;margin:0 auto 18px;padding:10px 20px;color:#ffb86b;font-size:13px;line-height:1.7;background:#1c1622;border:1px solid #3a2b1f;border-radius:10px;';
+  n.textContent = text;
+  els.messages.appendChild(n);
+  els.messages.scrollTop = els.messages.scrollHeight;
+}
+
 function renderMarkdownLite(text){
   var esc = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   esc = esc.replace(/```([\s\S]*?)```/g, function(_, c){ return '<pre><code>'+c.replace(/^\n/,'')+'</code></pre>'; });
@@ -284,8 +292,12 @@ function renderMarkdownLite(text){
 function send(){
   var text = els.input.value.trim();
   if (!text) return;
-  var key = localStorage.getItem('ds_key');
-  if (!key){ openSettings(); return; }
+  var key = (localStorage.getItem('ds_key') || '').trim();
+  if (!key){
+    showNotice('⚠️ 尚未配置 DeepSeek API Key,无法发送。点右上角 ⚙ 打开设置,粘贴你的 key(sk- 开头,从 platform.deepseek.com 获取)后点「保存」。你的输入已保留在下方。');
+    openSettings();
+    return;
+  }
 
   var ub = addMsg('user');
   ub.textContent = text;
