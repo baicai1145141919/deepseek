@@ -91,6 +91,17 @@
   .bubble ul.task-list { list-style:none; padding-left:4px; }
   .bubble li.task { list-style:none; display:flex; align-items:flex-start; gap:8px; }
   .bubble li.task input { margin-top:4px; accent-color:#4d6bfe; }
+  .bubble mark { background:#3a3413; color:#ffe27a; padding:0 3px; border-radius:3px; }
+  .bubble kbd { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px; background:#26262f; border:1px solid #3a3a48; border-bottom-width:2px; border-radius:4px; padding:1px 5px; }
+  .bubble sub, .bubble sup { font-size:11px; }
+  .bubble dl { margin:0 0 10px; }
+  .bubble dt { font-weight:600; margin-top:6px; }
+  .bubble dd { margin:2px 0 6px 18px; color:#c7ccd6; }
+  .bubble .footnotes { margin-top:14px; font-size:13px; color:#9aa0ab; }
+  .bubble .footnotes ol { padding-left:20px; }
+  .bubble .fn-ref a { color:#7aa2ff; text-decoration:none; }
+  .bubble .mermaid { text-align:center; margin:6px 0 12px; }
+  .bubble .mermaid svg { max-width:100%; height:auto; }
   .typing::after { content:"▍"; animation:blink 1s steps(2) infinite; color:#6b7180; }
   @keyframes blink { 0%,50%{opacity:1} 50.01%,100%{opacity:0} }
 
@@ -317,17 +328,21 @@ function escapeHtml(s){
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-/* 行内 Markdown：加粗 / 斜体 / 删除线 / 行内代码 / 链接 */
+/* 行内 Markdown：高亮 / 加粗 / 斜体 / 删除线 / 行内代码 / 链接 / 脚注 / 安全HTML白名单 */
 function renderInline(s){
   var codes = [];
   s = s.replace(/`([^`\n]+)`/g, function(_, c){ var id = codes.length; codes.push('<code>'+c+'</code>'); return '\u0001'+id+'\u0001'; });
+  s = s.replace(/==([^=\n]+)==/g, '<mark>$1</mark>');
   s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   s = s.replace(/__([^_]+)__/g, '<strong>$1</strong>');
   s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
   s = s.replace(/(^|[^_])_([^_\n]+)_/g, '$1<em>$2</em>');
   s = s.replace(/~~([^~]+)~~/g, '<del>$1</del>');
   s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, function(_, t, u){ return '<a href="'+u+'" target="_blank" rel="noopener">'+t+'</a>'; });
+  s = s.replace(/\[\^([^\]]+)\]/g, function(_, id){ return '<sup class="fn-ref"><a href="#fn-'+id+'">['+id+']</a></sup>'; });
   s = s.replace(/\u0001(\d+)\u0001/g, function(_, i){ return codes[+i]; });
+  // 允许安全的行内 HTML 标签（白名单，其余保持转义防 XSS）
+  s = s.replace(/&lt;(mark|u|sub|sup|kbd|b|i|small|ins)&gt;([\s\S]*?)&lt;\/\1&gt;/g, '<$1>$2</$1>');
   return s;
 }
 
@@ -349,39 +364,72 @@ function mdAlign(line){
 }
 function mdAlignAttr(a){ return a ? ' style="text-align:'+a+'"' : ''; }
 
-/* 完整 Markdown 渲染：代码块 / 公式 / 表格 / 标题 / 列表 / 引用 / 分割线 / 段落 / 行内 */
+/* 完整 Markdown 渲染：代码块 / 公式 / 表格 / 标题 / 列表 / 引用 / 定义列表 / 脚注 / 分割线 / 段落 / 行内 */
 function renderMarkdownLite(text){
   // 0) 保护数学公式（避免被加粗/斜体规则破坏）
   var mathStore = [];
   text = text.replace(/\$\$([\s\S]+?)\$\$/g, function(_, c){ var id = mathStore.length; mathStore.push('$$'+c+'$$'); return '\u0002'+id+'\u0002'; });
   text = text.replace(/\$([^\$\n]+?)\$/g, function(_, c){ var id = mathStore.length; mathStore.push('$'+c+'$'); return '\u0002'+id+'\u0002'; });
-  // 1) 保护围栏代码块
+  // 1) 保护围栏代码块（mermaid 单独标记）
   var codeBlocks = [];
   text = text.replace(/```([\s\S]*?)```/g, function(_, c){
+    var inner = c == null ? '' : c.replace(/^\n/, '');
+    var lm = inner.match(/^([a-zA-Z0-9_+-]+)\n([\s\S]*)$/);
     var id = codeBlocks.length;
-    codeBlocks.push('<pre><code>'+ escapeHtml(c == null ? '' : c.replace(/^\n/, '').replace(/\n$/, '')) +'</code></pre>');
+    if (lm && lm[1].toLowerCase() === 'mermaid'){
+      codeBlocks.push({ type:'mermaid', body: lm[2] });
+    } else {
+      codeBlocks.push({ type:'code', html: '<pre><code>'+ escapeHtml(inner) +'</code></pre>' });
+    }
     return '\n\u0000CODE'+id+'\u0000\n';
   });
   // 2) 转义其余文本
   text = escapeHtml(text);
   // 3) 逐行分块
   var lines = text.split('\n'), out = [], i = 0, para = [];
+  var footnotes = {};
   function flushPara(){
     if (para.length){ out.push('<p>'+ renderInline(para.join('<br>')) +'</p>'); para = []; }
   }
   while (i < lines.length){
     var line = lines[i];
     var cp = line.match(/^\u0000CODE(\d+)\u0000$/);
-    if (cp){ flushPara(); out.push(codeBlocks[+cp[1]]); i++; continue; }
+    if (cp){
+      flushPara();
+      var cb = codeBlocks[+cp[1]];
+      out.push(cb.type === 'mermaid' ? '<div class="mermaid">'+escapeHtml(cb.body)+'</div>' : cb.html);
+      i++; continue;
+    }
     var mp = line.match(/^\u0002(\d+)\u0002$/);
     if (mp){ flushPara(); out.push(mathStore[+mp[1]]); i++; continue; }
     if (/^\s*([-*_])\1{2,}\s*$/.test(line)){ flushPara(); out.push('<hr>'); i++; continue; }
     var h = line.match(/^(#{1,6})\s+(.*)$/);
     if (h){ flushPara(); var lv = h[1].length; out.push('<h'+lv+'>'+renderInline(h[2])+'</h'+lv+'>'); i++; continue; }
-    if (/^\s*&gt;\s?/.test(line)){
+    var fn = line.match(/^\[\^([^\]]+)\]:\s+(.*)$/);
+    if (fn){ footnotes[fn[1]] = renderInline(fn[2]); i++; continue; }
+    // 嵌套引用
+    if (/^\s*(&gt;)+\s?/.test(line)){
       var q = [];
-      while (i < lines.length && /^\s*&gt;\s?/.test(lines[i])){ q.push(lines[i].replace(/^\s*&gt;\s?/, '')); i++; }
-      flushPara(); out.push('<blockquote>'+ renderInline(q.join('<br>')) +'</blockquote>'); continue;
+      while (i < lines.length && /^\s*(&gt;)+\s?/.test(lines[i])){
+        var mm = lines[i].match(/^(\s*((?:&gt;)+))\s?(.*)$/);
+        var depth = (mm[2].match(/&gt;/g) || []).length;
+        q.push({ depth: depth, text: mm[3] });
+        i++;
+      }
+      flushPara();
+      var minD = q.reduce(function(a, b){ return Math.min(a, b.depth); }, 99);
+      out.push('<blockquote>'+ renderNestedQuotes(q, 0, minD).html +'</blockquote>');
+      continue;
+    }
+    // 定义列表（术语 + : 定义）
+    if (i + 1 < lines.length && /^\s*: /.test(lines[i+1])){
+      flushPara();
+      var term = renderInline(line);
+      var dds = [];
+      i++;
+      while (i < lines.length && /^\s*: /.test(lines[i])){ dds.push(renderInline(lines[i].replace(/^\s*: /, ''))); i++; }
+      out.push('<dl><dt>'+term+'</dt>'+ dds.map(function(d){ return '<dd>'+d+'</dd>'; }).join('') +'</dl>');
+      continue;
     }
     if (mdIsRow(line) && i+1 < lines.length && mdIsSep(lines[i+1])){
       var header = mdSplitRow(line), align = mdAlign(lines[i+1]); i += 2;
@@ -415,13 +463,31 @@ function renderMarkdownLite(text){
       while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])){ ol.push('<li>'+renderInline(lines[i].replace(/^\s*\d+\.\s+/, ''))+'</li>'); i++; }
       flushPara(); out.push('<ol>'+ol.join('')+'</ol>'); continue;
     }
+    if (line.trim() === ''){ flushPara(); i++; continue; }
     para.push(line); i++;
   }
   flushPara();
   var htmlStr = out.join('');
   // 4) 还原公式占位符（已转义，安全）
   htmlStr = htmlStr.replace(/\u0002(\d+)\u0002/g, function(_, i2){ return escapeHtml(mathStore[+i2]); });
+  // 5) 脚注列表
+  var fkeys = Object.keys(footnotes);
+  if (fkeys.length){
+    htmlStr += '<div class="footnotes"><hr><ol>' +
+      fkeys.map(function(k){ return '<li id="fn-'+k+'">'+footnotes[k]+'</li>'; }).join('') +
+      '</ol></div>';
+  }
   return htmlStr;
+}
+
+/* 嵌套引用递归渲染 */
+function renderNestedQuotes(items, idx, depth){
+  var buf = [];
+  while (idx < items.length && items[idx].depth >= depth){
+    if (items[idx].depth === depth){ buf.push(renderInline(items[idx].text)); idx++; }
+    else { var sub = renderNestedQuotes(items, idx, depth + 1); buf.push('<blockquote>'+sub.html+'</blockquote>'); idx = sub.idx; }
+  }
+  return { html: buf.join('<br>'), idx: idx };
 }
 
 /* ===== KaTeX 数学公式渲染（按需从 CDN 加载） ===== */
@@ -463,10 +529,40 @@ function renderMath(el){
     ensureKatex(function(){ renderMath(el); });
   }
 }
-/* 设置气泡内容并渲染公式 */
+/* 设置气泡内容并渲染公式 / 图表 */
 function paintBubble(el, html){
   el.innerHTML = html;
   renderMath(el);
+  renderMermaidIn(el);
+}
+
+/* ===== Mermaid 图表渲染（按需从 CDN 加载） ===== */
+var mermaidState = 0; // 0 未加载 1 加载中 2 就绪 -1 失败
+function ensureMermaid(cb){
+  if (mermaidState === 2){ cb(); return; }
+  if (mermaidState === -1){ return; }
+  if (mermaidState === 1){ setTimeout(function(){ ensureMermaid(cb); }, 150); return; }
+  mermaidState = 1;
+  var s = document.createElement('script');
+  s.src = 'https://cdn.jsdelivr.net/npm/mermaid@9.3.0/dist/mermaid.min.js';
+  s.onload = function(){ try { window.mermaid.initialize({ startOnLoad:false, theme:'dark', securityLevel:'loose' }); } catch(e){} mermaidState = 2; cb(); };
+  s.onerror = function(){ mermaidState = -1; };
+  document.head.appendChild(s);
+}
+function renderMermaidIn(el){
+  var nodes = el.querySelectorAll('.mermaid');
+  if (!nodes.length) return;
+  if (window.mermaid){
+    try {
+      nodes.forEach(function(n){
+        if (n.dataset.mm) return;
+        var id = 'mmd-' + Math.random().toString(36).slice(2);
+        window.mermaid.render(id, n.textContent, function(svg){ n.innerHTML = svg; n.dataset.mm = '1'; });
+      });
+    } catch(e){}
+  } else {
+    ensureMermaid(function(){ renderMermaidIn(el); });
+  }
 }
 
 /* ===== 发送（流式） ===== */
