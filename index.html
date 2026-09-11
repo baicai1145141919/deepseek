@@ -88,6 +88,9 @@
   .bubble th, .bubble td { border:1px solid #2c2c38; padding:7px 10px; text-align:left; vertical-align:top; }
   .bubble th { background:#17171f; color:#e6e6e6; font-weight:600; }
   .bubble tbody tr:nth-child(odd) td { background:#121218; }
+  .bubble ul.task-list { list-style:none; padding-left:4px; }
+  .bubble li.task { list-style:none; display:flex; align-items:flex-start; gap:8px; }
+  .bubble li.task input { margin-top:4px; accent-color:#4d6bfe; }
   .typing::after { content:"▍"; animation:blink 1s steps(2) infinite; color:#6b7180; }
   @keyframes blink { 0%,50%{opacity:1} 50.01%,100%{opacity:0} }
 
@@ -254,7 +257,7 @@ function renderMessages(msgs){
       var html = '';
       if (m.reasoning) html += '<div class="think">'+renderMarkdownLite(m.reasoning)+'</div>';
       html += renderMarkdownLite(m.content || '');
-      ab.innerHTML = html;
+      paintBubble(ab, html);
     }
   }
   els.messages.scrollTop = els.messages.scrollHeight;
@@ -346,8 +349,12 @@ function mdAlign(line){
 }
 function mdAlignAttr(a){ return a ? ' style="text-align:'+a+'"' : ''; }
 
-/* 完整 Markdown 渲染：代码块 / 表格 / 标题 / 列表 / 引用 / 分割线 / 段落 / 行内 */
+/* 完整 Markdown 渲染：代码块 / 公式 / 表格 / 标题 / 列表 / 引用 / 分割线 / 段落 / 行内 */
 function renderMarkdownLite(text){
+  // 0) 保护数学公式（避免被加粗/斜体规则破坏）
+  var mathStore = [];
+  text = text.replace(/\$\$([\s\S]+?)\$\$/g, function(_, c){ var id = mathStore.length; mathStore.push('$$'+c+'$$'); return '\u0002'+id+'\u0002'; });
+  text = text.replace(/\$([^\$\n]+?)\$/g, function(_, c){ var id = mathStore.length; mathStore.push('$'+c+'$'); return '\u0002'+id+'\u0002'; });
   // 1) 保护围栏代码块
   var codeBlocks = [];
   text = text.replace(/```([\s\S]*?)```/g, function(_, c){
@@ -366,6 +373,8 @@ function renderMarkdownLite(text){
     var line = lines[i];
     var cp = line.match(/^\u0000CODE(\d+)\u0000$/);
     if (cp){ flushPara(); out.push(codeBlocks[+cp[1]]); i++; continue; }
+    var mp = line.match(/^\u0002(\d+)\u0002$/);
+    if (mp){ flushPara(); out.push(mathStore[+mp[1]]); i++; continue; }
     if (/^\s*([-*_])\1{2,}\s*$/.test(line)){ flushPara(); out.push('<hr>'); i++; continue; }
     var h = line.match(/^(#{1,6})\s+(.*)$/);
     if (h){ flushPara(); var lv = h[1].length; out.push('<h'+lv+'>'+renderInline(h[2])+'</h'+lv+'>'); i++; continue; }
@@ -386,9 +395,20 @@ function renderMarkdownLite(text){
       flushPara(); out.push(t); continue;
     }
     if (/^\s*[-*+]\s+/.test(line)){
-      var ul = [];
-      while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])){ ul.push('<li>'+renderInline(lines[i].replace(/^\s*[-*+]\s+/, ''))+'</li>'); i++; }
-      flushPara(); out.push('<ul>'+ul.join('')+'</ul>'); continue;
+      var ul = [], anyTask = false;
+      while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])){
+        var raw = lines[i].replace(/^\s*[-*+]\s+/, '');
+        var tm = raw.match(/^\[([ xX])\]\s+(.*)$/);
+        if (tm){
+          anyTask = true;
+          var checked = (tm[1].toLowerCase() === 'x') ? ' checked' : '';
+          ul.push('<li class="task"><input type="checkbox" disabled'+checked+'> '+renderInline(tm[2])+'</li>');
+        } else {
+          ul.push('<li>'+renderInline(raw)+'</li>');
+        }
+        i++;
+      }
+      flushPara(); out.push('<ul'+(anyTask?' class="task-list"':'')+'>'+ul.join('')+'</ul>'); continue;
     }
     if (/^\s*\d+\.\s+/.test(line)){
       var ol = [];
@@ -398,7 +418,55 @@ function renderMarkdownLite(text){
     para.push(line); i++;
   }
   flushPara();
-  return out.join('');
+  var htmlStr = out.join('');
+  // 4) 还原公式占位符（已转义，安全）
+  htmlStr = htmlStr.replace(/\u0002(\d+)\u0002/g, function(_, i2){ return escapeHtml(mathStore[+i2]); });
+  return htmlStr;
+}
+
+/* ===== KaTeX 数学公式渲染（按需从 CDN 加载） ===== */
+var katexState = 0; // 0 未加载 1 加载中 2 就绪 -1 失败
+function ensureKatex(cb){
+  if (katexState === 2){ cb(); return; }
+  if (katexState === -1){ return; }
+  if (katexState === 1){ setTimeout(function(){ ensureKatex(cb); }, 150); return; }
+  katexState = 1;
+  var css = document.createElement('link');
+  css.rel = 'stylesheet'; css.href = 'https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css';
+  document.head.appendChild(css);
+  var s = document.createElement('script');
+  s.src = 'https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js';
+  s.onload = function(){
+    var ar = document.createElement('script');
+    ar.src = 'https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js';
+    ar.onerror = function(){ katexState = -1; };
+    ar.onload = function(){ katexState = 2; cb(); };
+    document.head.appendChild(ar);
+  };
+  s.onerror = function(){ katexState = -1; };
+  document.head.appendChild(s);
+}
+function renderMath(el){
+  if (window.renderMathInElement){
+    try {
+      window.renderMathInElement(el, {
+        delimiters: [
+          { left:'$$', right:'$$', display:true },
+          { left:'$', right:'$', display:false },
+          { left:'\\(', right:'\\)', display:false },
+          { left:'\\[', right:'\\]', display:true }
+        ],
+        throwOnError: false
+      });
+    } catch(e){}
+  } else {
+    ensureKatex(function(){ renderMath(el); });
+  }
+}
+/* 设置气泡内容并渲染公式 */
+function paintBubble(el, html){
+  el.innerHTML = html;
+  renderMath(el);
 }
 
 /* ===== 发送（流式） ===== */
@@ -467,7 +535,7 @@ function send(){
         var html = '';
         if (reasoning) html += '<div class="think">'+renderMarkdownLite(reasoning)+'</div>';
         html += renderMarkdownLite(full);
-        ab.innerHTML = html;
+        paintBubble(ab, html);
         els.messages.scrollTop = els.messages.scrollHeight;
         return pump();
       });
@@ -475,7 +543,7 @@ function send(){
     return pump();
   }).catch(function(err){
     ab.classList.remove('typing');
-    if (err.name === 'AbortError'){ if (full) cur.messages.push({ role:'assistant', content:full, reasoning:reasoning }); saveSessions(); ab.innerHTML = renderMarkdownLite(full); }
+    if (err.name === 'AbortError'){ if (full) cur.messages.push({ role:'assistant', content:full, reasoning:reasoning }); saveSessions(); paintBubble(ab, renderMarkdownLite(full)); }
     else { ab.textContent = '请求失败：' + err.message + '\n（确认 API Key 正确、接口可达）'; }
   }).then(function(){
     controller = null;
