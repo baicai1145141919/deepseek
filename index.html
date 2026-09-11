@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>DeepSeek 中转站</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1f232c; --line:#2a2f3a;
+    --txt:#e6e9ef; --dim:#8b93a1; --gold:#c9a227; --gold2:#e0bd3a;
+    --user:#2b3242; --bot:#171a21; --err:#f08080; --ok:#6ee7b7;
+    --radius:4px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;}
+  body{
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",Segoe UI,sans-serif;
+    background:var(--bg); color:var(--txt); min-height:100vh;
+    -webkit-font-smoothing:antialiased;
+  }
+  /* ===== 密码门锁 ===== */
+  #lock{
+    position:fixed; inset:0; z-index:50; display:flex; align-items:center; justify-content:center;
+    background:radial-gradient(900px 480px at 50% -10%, #1a1f2b, var(--bg) 60%);
+  }
+  #lock .box{
+    width:min(360px,86vw); background:var(--panel); border:1px solid var(--line);
+    border-left:3px solid var(--gold); border-radius:var(--radius); padding:28px 26px;
+  }
+  #lock .ttl{font-size:13px; letter-spacing:3px; color:var(--gold); margin-bottom:4px;}
+  #lock h1{font-size:20px; margin:0 0 18px; letter-spacing:1px;}
+  #lock input{
+    width:100%; background:var(--panel2); border:1px solid var(--line); color:var(--txt);
+    padding:11px 12px; border-radius:var(--radius); font-size:14px; outline:none;
+  }
+  #lock input:focus{border-color:var(--gold);}
+  #lock .enter{
+    width:100%; margin-top:12px; background:var(--gold); color:#1a1408; border:none;
+    padding:11px; font-size:14px; font-weight:700; border-radius:var(--radius); cursor:pointer; letter-spacing:2px;
+  }
+  #lock .enter:hover{background:var(--gold2);}
+  #lock .err{color:var(--err); font-size:12px; min-height:16px; margin-top:8px;}
+  #lock .hint{color:var(--dim); font-size:11px; margin-top:14px; line-height:1.6;}
+  /* ===== 主体 ===== */
+  #app{display:none; flex-direction:column; height:100vh; max-width:880px; margin:0 auto;}
+  #app.on{display:flex;}
+  .topbar{
+    display:flex; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--line);
+    background:var(--panel);
+  }
+  .topbar .brand{font-size:15px; font-weight:700; letter-spacing:1px;}
+  .topbar .brand b{color:var(--gold);}
+  .topbar .sub{font-size:11px; color:var(--dim);}
+  .topbar .sp{flex:1;}
+  .topbar button{
+    background:transparent; color:var(--dim); border:1px solid var(--line); border-radius:var(--radius);
+    padding:7px 11px; font-size:12px; cursor:pointer;
+  }
+  .topbar button:hover{color:var(--txt); border-color:#3a424b;}
+  /* 设置面板 */
+  #settings{
+    display:none; border-bottom:1px solid var(--line); background:var(--panel); padding:14px 16px;
+  }
+  #settings.on{display:block;}
+  #settings .row{display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center;}
+  #settings label{font-size:12px; color:var(--dim); display:flex; flex-direction:column; gap:5px;}
+  #settings input, #settings select{
+    background:var(--panel2); border:1px solid var(--line); color:var(--txt);
+    padding:8px 10px; border-radius:var(--radius); font-size:13px; outline:none; min-width:200px;
+  }
+  #settings input:focus, #settings select:focus{border-color:var(--gold);}
+  #settings .full{width:100%;}
+  #settings .tip{font-size:11px; color:var(--dim); margin-top:10px; line-height:1.7;}
+  #settings .tip code{color:var(--gold); background:var(--panel2); padding:1px 5px; border-radius:3px;}
+  /* 消息区 */
+  #msgs{flex:1; overflow-y:auto; padding:18px 16px; display:flex; flex-direction:column; gap:14px;}
+  .msg{max-width:92%; padding:11px 13px; border-radius:var(--radius); line-height:1.7; font-size:14px; white-space:pre-wrap; word-break:break-word;}
+  .msg .who{font-size:10px; letter-spacing:1px; color:var(--dim); margin-bottom:5px; display:block;}
+  .msg.user{align-self:flex-end; background:var(--user); border:1px solid #313a4d;}
+  .msg.bot{align-self:flex-start; background:var(--bot); border:1px solid var(--line);}
+  .msg.bot pre{background:#0c0e12; border:1px solid var(--line); border-radius:3px; padding:10px; overflow:auto; font-size:12.5px;}
+  .msg.bot code{background:#0c0e12; padding:1px 4px; border-radius:3px; font-size:12.5px;}
+  .reason{margin-top:8px; border-top:1px dashed var(--line); padding-top:8px;}
+  .reason summary{font-size:11px; color:var(--gold); cursor:pointer; outline:none;}
+  .reason .rc{font-size:12.5px; color:var(--dim); line-height:1.7; white-space:pre-wrap;}
+  .empty{color:var(--dim); font-size:13px; text-align:center; margin-top:30px; line-height:1.9;}
+  /* 输入区 */
+  .inputbar{border-top:1px solid var(--line); background:var(--panel); padding:12px 16px; display:flex; gap:10px; align-items:flex-end;}
+  .inputbar textarea{
+    flex:1; resize:none; height:54px; max-height:160px; background:var(--panel2); color:var(--txt);
+    border:1px solid var(--line); border-radius:var(--radius); padding:10px 12px; font-size:14px; line-height:1.5; outline:none; font-family:inherit;
+  }
+  .inputbar textarea:focus{border-color:var(--gold);}
+  .inputbar .send{
+    background:var(--gold); color:#1a1408; border:none; border-radius:var(--radius); padding:0 20px; height:54px;
+    font-size:14px; font-weight:700; cursor:pointer; letter-spacing:1px;
+  }
+  .inputbar .send:hover{background:var(--gold2);}
+  .inputbar .send:disabled{opacity:.45; cursor:default;}
+  .inputbar .send.stop{background:transparent; color:var(--err); border:1px solid var(--err);}
+  .caret{display:inline-block; width:7px; height:14px; background:var(--gold); vertical-align:-2px; animation:blink 1s steps(2) infinite; margin-left:2px;}
+  @keyframes blink{50%{opacity:0;}}
+  ::-webkit-scrollbar{width:9px;height:9px;}
+  ::-webkit-scrollbar-thumb{background:#2a2f3a; border-radius:5px;}
+</style>
+</head>
+<body>
+
+<div id="lock">
+  <div class="box">
+    <div class="ttl">RESTRICTED</div>
+    <h1>DeepSeek 中转站</h1>
+    <input id="pw" type="password" placeholder="输入访问密码" autocomplete="off" autofocus>
+    <button class="enter" id="pwEnter">进 入</button>
+    <div class="err" id="pwErr"></div>
+    <div class="hint">本站为浏览器直连 DeepSeek 的中转界面，需自备 DeepSeek API Key。<br>进入后请在右上角「设置」中填写密钥与接口地址。</div>
+  </div>
+</div>
+
+<div id="app">
+  <div class="topbar">
+    <div>
+      <div class="brand"><b>DeepSeek</b> 中转站</div>
+      <div class="sub" id="statusSub">未连接</div>
+    </div>
+    <div class="sp"></div>
+    <button id="setBtn">设置</button>
+    <button id="clearBtn">清空</button>
+    <button id="lockBtn">锁屏</button>
+  </div>
+
+  <div id="settings">
+    <div class="row">
+      <label>API Key
+        <input id="cfgKey" type="password" placeholder="sk-..." autocomplete="off">
+      </label>
+      <label>接口地址
+        <input id="cfgBase" type="text" placeholder="https://api.deepseek.com">
+      </label>
+      <label>模型
+        <select id="cfgModel">
+          <option value="deepseek-chat">deepseek-chat</option>
+          <option value="deepseek-reasoner">deepseek-reasoner（带思考过程）</option>
+        </select>
+      </label>
+      <label>温度
+        <input id="cfgTemp" type="number" step="0.1" min="0" max="2" value="1" style="min-width:90px;">
+      </label>
+    </div>
+    <label class="full" style="margin-top:10px;">系统提示词（可选）
+      <input id="cfgSys" type="text" placeholder="你是一个乐于助人的助手">
+    </label>
+    <div class="tip">默认接口地址为官方 <code>https://api.deepseek.com</code>，与该站 CORS 已兼容，浏览器可直连。也可填入任意 OpenAI 兼容的中转地址。密钥仅保存在本机浏览器（localStorage），不会上传到任何第三方。</div>
+  </div>
+
+  <div id="msgs">
+    <div class="empty">还没有对话。<br>先在「设置」里填好 API Key，然后在下方输入消息开始。</div>
+  </div>
+
+  <div class="inputbar">
+    <textarea id="input" placeholder="输入消息…  Enter 发送 / Shift+Enter 换行"></textarea>
+    <button class="send" id="sendBtn">发送</button>
+  </div>
+</div>
+
+<script>
+/* ===== 访问密码（前端门禁，仅作基本访问控制） ===== */
+var ACCESS_PASSWORD = 'fwgzgaojiarui';
+
+var els = {
+  lock: document.getElementById('lock'),
+  pw: document.getElementById('pw'),
+  pwEnter: document.getElementById('pwEnter'),
+  pwErr: document.getElementById('pwErr'),
+  app: document.getElementById('app'),
+  setBtn: document.getElementById('setBtn'),
+  clearBtn: document.getElementById('clearBtn'),
+  lockBtn: document.getElementById('lockBtn'),
+  settings: document.getElementById('settings'),
+  cfgKey: document.getElementById('cfgKey'),
+  cfgBase: document.getElementById('cfgBase'),
+  cfgModel: document.getElementById('cfgModel'),
+  cfgTemp: document.getElementById('cfgTemp'),
+  cfgSys: document.getElementById('cfgSys'),
+  msgs: document.getElementById('msgs'),
+  input: document.getElementById('input'),
+  sendBtn: document.getElementById('sendBtn'),
+  statusSub: document.getElementById('statusSub')
+};
+
+/* ---- 密码门禁 ---- */
+function tryUnlock(){
+  if(els.pw.value === ACCESS_PASSWORD){
+    els.lock.style.display = 'none';
+    els.app.classList.add('on');
+    els.pwErr.textContent = '';
+    loadSettings();
+    refreshStatus();
+    els.input.focus();
+  } else {
+    els.pwErr.textContent = '密码错误';
+    els.pw.value = '';
+  }
+}
+els.pwEnter.onclick = tryUnlock;
+els.pw.addEventListener('keydown', function(e){ if(e.key==='Enter') tryUnlock(); });
+els.lockBtn.onclick = function(){
+  els.app.classList.remove('on');
+  els.lock.style.display = 'flex';
+  els.pw.value = '';
+};
+
+/* ---- 设置持久化 ---- */
+function loadSettings(){
+  els.cfgKey.value   = localStorage.getItem('ds_key')  || '';
+  els.cfgBase.value  = localStorage.getItem('ds_base') || 'https://api.deepseek.com';
+  els.cfgModel.value = localStorage.getItem('ds_model')|| 'deepseek-chat';
+  els.cfgTemp.value  = localStorage.getItem('ds_temp') || '1';
+  els.cfgSys.value   = localStorage.getItem('ds_sys')  || '';
+}
+function saveSettings(){
+  localStorage.setItem('ds_key',   els.cfgKey.value.trim());
+  localStorage.setItem('ds_base',  els.cfgBase.value.trim() || 'https://api.deepseek.com');
+  localStorage.setItem('ds_model', els.cfgModel.value);
+  localStorage.setItem('ds_temp',  els.cfgTemp.value);
+  localStorage.setItem('ds_sys',   els.cfgSys.value.trim());
+}
+[els.cfgKey, els.cfgBase, els.cfgModel, els.cfgTemp, els.cfgSys].forEach(function(el){
+  el.addEventListener('change', function(){ saveSettings(); refreshStatus(); });
+});
+els.setBtn.onclick = function(){ els.settings.classList.toggle('on'); };
+
+function refreshStatus(){
+  var k = els.cfgKey.value.trim();
+  els.statusSub.textContent = k ? ('已配置密钥 · ' + els.cfgModel.value) : '未配置 API Key';
+}
+
+/* ---- 对话状态 ---- */
+var conversation = [];      // [{role, content}]
+var abortCtrl = null;
+var streaming = false;
+
+function addMsg(role, text){
+  var empty = els.msgs.querySelector('.empty');
+  if(empty) empty.remove();
+  var div = document.createElement('div');
+  div.className = 'msg ' + role;
+  var who = document.createElement('span');
+  who.className = 'who';
+  who.textContent = role === 'user' ? '你' : 'DeepSeek';
+  div.appendChild(who);
+  var body = document.createElement('div');
+  body.className = 'body';
+  body.textContent = text;
+  div.appendChild(body);
+  els.msgs.appendChild(div);
+  els.msgs.scrollTop = els.msgs.scrollHeight;
+  return div;
+}
+
+function escapeHtml(s){
+  return s.replace(/[&<>]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]; });
+}
+// 极简 markdown：```代码块``` 与 `行内码`
+function renderMarkdownLite(text){
+  var esc = escapeHtml(text);
+  esc = esc.replace(/```([\s\S]*?)```/g, function(_, c){ return '<pre>'+c.replace(/^\n/,'')+'</pre>'; });
+  esc = esc.replace(/`([^`\n]+?)`/g, '<code>$1</code>');
+  return esc;
+}
+
+function setStreaming(on){
+  streaming = on;
+  els.sendBtn.textContent = on ? '停止' : '发送';
+  els.sendBtn.classList.toggle('stop', on);
+  els.input.disabled = on;
+}
+
+els.sendBtn.onclick = function(){
+  if(streaming){
+    if(abortCtrl) abortCtrl.abort();
+    return;
+  }
+  send();
+};
+
+els.input.addEventListener('keydown', function(e){
+  if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); if(!streaming) send(); }
+});
+
+function buildMessages(){
+  var msgs = [];
+  var sys = els.cfgSys.value.trim();
+  if(sys) msgs.push({ role:'system', content: sys });
+  conversation.forEach(function(m){ msgs.push({ role:m.role, content:m.content }); });
+  return msgs;
+}
+
+async function send(){
+  var text = els.input.value.trim();
+  if(!text) return;
+  var key = els.cfgKey.value.trim();
+  if(!key){ alert('请先在「设置」中填写 DeepSeek API Key'); els.settings.classList.add('on'); return; }
+
+  addMsg('user', text);
+  conversation.push({ role:'user', content:text });
+  els.input.value = '';
+
+  var botDiv = addMsg('bot', '');
+  var botBody = botDiv.querySelector('.body');
+  var raw = '';
+  var reasoning = '';
+  var reasonEl = null;
+
+  setStreaming(true);
+  abortCtrl = new AbortController();
+
+  var base = (els.cfgBase.value.trim() || 'https://api.deepseek.com').replace(/\/+$/,'');
+  var payload = {
+    model: els.cfgModel.value,
+    messages: buildMessages(),
+    stream: true,
+    temperature: parseFloat(els.cfgTemp.value || '1')
+  };
+
+  try {
+    var resp = await fetch(base + '/chat/completions', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + key },
+      body: JSON.stringify(payload),
+      signal: abortCtrl.signal
+    });
+    if(!resp.ok){
+      var errTxt = await resp.text();
+      try { errTxt = JSON.parse(errTxt).error.message; } catch(e){}
+      botBody.innerHTML = '<span style="color:var(--err)">请求失败（'+resp.status+'）：'+escapeHtml(errTxt)+'</span>';
+      setStreaming(false);
+      return;
+    }
+    var reader = resp.body.getReader();
+    var decoder = new TextDecoder();
+    var buf = '';
+    while(true){
+      var chunk = await reader.read();
+      if(chunk.done) break;
+      buf += decoder.decode(chunk.value, { stream:true });
+      var lines = buf.split('\n');
+      buf = lines.pop();
+      for(var i=0;i<lines.length;i++){
+        var line = lines[i].trim();
+        if(!line || line.indexOf('data:') !== 0) continue;
+        var data = line.slice(5).trim();
+        if(data === '[DONE]') continue;
+        var j;
+        try { j = JSON.parse(data); } catch(e){ continue; }
+        var delta = j.choices && j.choices[0] && j.choices[0].delta;
+        if(!delta) continue;
+        if(delta.reasoning_content){
+          reasoning += delta.reasoning_content;
+          if(!reasonEl){
+            reasonEl = document.createElement('details');
+            reasonEl.className = 'reason';
+            var sum = document.createElement('summary'); sum.textContent = '思考过程';
+            var rc = document.createElement('div'); rc.className = 'rc';
+            reasonEl.appendChild(sum); reasonEl.appendChild(rc);
+            botDiv.insertBefore(reasonEl, botBody);
+          }
+          reasonEl.querySelector('.rc').textContent = reasoning;
+        }
+        if(delta.content){
+          raw += delta.content;
+          botBody.innerHTML = renderMarkdownLite(raw) + '<span class="caret"></span>';
+          els.msgs.scrollTop = els.msgs.scrollHeight;
+        }
+      }
+    }
+    botBody.innerHTML = renderMarkdownLite(raw);
+    conversation.push({ role:'assistant', content: raw });
+  } catch(err){
+    if(err.name === 'AbortError'){
+      botBody.innerHTML = renderMarkdownLite(raw) + '\n<span style="color:var(--dim)">（已停止）</span>';
+      if(raw) conversation.push({ role:'assistant', content: raw });
+    } else {
+      botBody.innerHTML = '<span style="color:var(--err)">出错了：'+escapeHtml(err.message)+'</span>';
+    }
+  } finally {
+    setStreaming(false);
+  }
+}
+
+els.clearBtn.onclick = function(){
+  if(streaming) return;
+  conversation = [];
+  els.msgs.innerHTML = '<div class="empty">对话已清空。<br>在下方输入消息开始新的对话。</div>';
+};
+
+// 自适应文本框高度
+els.input.addEventListener('input', function(){
+  this.style.height = '54px';
+  this.style.height = Math.min(this.scrollHeight, 160) + 'px';
+});
+
+loadSettings();
+refreshStatus();
+</script>
+</body>
+</html>
