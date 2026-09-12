@@ -66,7 +66,22 @@
   .msg.ai .bubble {
     width:100%; color:#e6e6e6; font-size:14.5px; line-height:1.75; white-space:normal; word-break:break-word;
   }
-  .think { color:#8a90a0; font-size:12.5px; border-left:2px solid #3a3a48; padding:4px 0 4px 12px; margin:0 0 10px; white-space:pre-wrap; }
+  .think-box { margin:0 0 12px; border:1px solid #2a2a34; border-radius:9px; background:#13131a; overflow:hidden; }
+  .think-box > summary {
+    cursor:pointer; list-style:none; padding:9px 12px; font-size:12.5px; color:#9aa0ab;
+    user-select:none; display:flex; align-items:center; gap:7px;
+  }
+  .think-box > summary::-webkit-details-marker { display:none; }
+  .think-box > summary .chev { font-size:10px; color:#6b7180; transition:transform .15s; }
+  .think-box[open] > summary .chev { transform:rotate(90deg); }
+  .think-box > summary .tlabel { flex:1; }
+  .think-box > summary .tstate { color:#6b7180; font-size:11.5px; }
+  .think-body {
+    padding:2px 14px 12px; margin:0 0 0 12px; color:#8a90a0; font-size:12.5px; line-height:1.75;
+    border-left:2px solid #3a3a48; white-space:pre-wrap; word-break:break-word;
+  }
+  .think-body.empty { color:#6b7180; font-style:italic; }
+  .think-body.typing::after { content:"▍"; animation:blink 1s steps(2) infinite; color:#6b7180; }
   .bubble pre { background:#0d0d12; border:1px solid #26262f; border-radius:8px; padding:12px 14px; overflow:auto; }
   .bubble code { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:13px; }
   .bubble :not(pre) > code { background:#26262f; padding:1px 5px; border-radius:4px; }
@@ -167,7 +182,12 @@
     <div class="modal-title">设置</div>
     <label for="cfgKey">API Key</label>
     <input id="cfgKey" type="password" placeholder="sk-..." autocomplete="off">
-    <div class="modal-tip">首次使用请先填你的 DeepSeek API Key（<code>sk-</code> 开头,从 platform.deepseek.com 获取）。模型：deepSeek chat · 接口：官方 <code>api.deepseek.com</code>（已内置）。密钥仅保存在本机浏览器,不会上传。</div>
+    <label for="cfgModel" style="margin-top:14px">模型</label>
+    <select id="cfgModel" style="width:100%;padding:11px 13px;font-size:14px;color:#e6e6e6;background:#0f0f15;border:1px solid #2a2a34;border-radius:9px;outline:none;">
+      <option value="reasoner">deepseek-reasoner · 带思考过程</option>
+      <option value="chat">deepseek-chat · 普通(无思考)</option>
+    </select>
+    <div class="modal-tip">首次使用请先填你的 DeepSeek API Key（<code>sk-</code> 开头,从 platform.deepseek.com 获取）。接口：官方 <code>api.deepseek.com</code>（已内置）。密钥仅保存在本机浏览器,不会上传。</div>
     <div class="modal-actions">
       <button id="cfgSave" class="btn-primary">保存</button>
       <button id="cfgClose" class="btn-ghost">取消</button>
@@ -178,13 +198,16 @@
 <script>
 /* 无密码门禁：填入 API Key 即可直接使用 */
 
-/* 固定配置（界面隐藏：接口地址 + 温度） */
+/* 固定配置（界面隐藏：接口地址 + 温度）；模型可在设置里切换 */
 var API_BASE = 'https://api.deepseek.com';
-var MODEL    = 'deepseek-chat';
 var TEMP     = 1;
+var MODEL_CHOICES = { reasoner:'deepseek-reasoner', chat:'deepseek-chat' };
+var modelChoice = localStorage.getItem('ds_model') || 'reasoner';
+function currentModel(){ return MODEL_CHOICES[modelChoice] || 'deepseek-reasoner'; }
 
 var els = {
   app: document.getElementById('app'),
+  modelTag: document.getElementById('modelTag'),
   messages: document.getElementById('messages'),
   input: document.getElementById('input'),
   send: document.getElementById('sendBtn'),
@@ -193,6 +216,7 @@ var els = {
   gear: document.getElementById('gearBtn'),
   modal: document.getElementById('settingsModal'),
   cfgKey: document.getElementById('cfgKey'),
+  cfgModel: document.getElementById('cfgModel'),
   cfgSave: document.getElementById('cfgSave'),
   cfgClose: document.getElementById('cfgClose')
 };
@@ -207,13 +231,23 @@ function boot(){
 }
 
 /* ===== 设置 ===== */
-function loadCfg(){ els.cfgKey.value = localStorage.getItem('ds_key') || ''; }
+function updateModelTag(){
+  els.modelTag.textContent = (modelChoice === 'reasoner') ? 'deepSeek reasoner · 思考' : 'deepSeek chat';
+}
+function loadCfg(){
+  els.cfgKey.value = localStorage.getItem('ds_key') || '';
+  els.cfgModel.value = modelChoice;
+  updateModelTag();
+}
 function openSettings(){ loadCfg(); els.modal.style.display = 'flex'; els.cfgKey.focus(); }
 function closeSettings(){ els.modal.style.display = 'none'; }
 els.gear.onclick = openSettings;
 els.cfgClose.onclick = closeSettings;
 els.cfgSave.onclick = function(){
   localStorage.setItem('ds_key', els.cfgKey.value.trim());
+  modelChoice = els.cfgModel.value;
+  localStorage.setItem('ds_model', modelChoice);
+  updateModelTag();
   closeSettings();
 };
 els.modal.addEventListener('click', function(e){ if (e.target === els.modal) closeSettings(); });
@@ -257,6 +291,21 @@ function renderSidebar(){
   }
 }
 
+/* 构造可折叠思考面板 */
+function buildThinkBlock(reasoning, open){
+  var wrap = document.createElement('details');
+  wrap.className = 'think-box';
+  if (open) wrap.open = true;
+  var sum = document.createElement('summary');
+  sum.innerHTML = '<span class="chev">▶</span><span class="tlabel">💡 思考过程</span>';
+  wrap.appendChild(sum);
+  var body = document.createElement('div');
+  body.className = 'think-body';
+  body.textContent = reasoning;
+  wrap.appendChild(body);
+  return wrap;
+}
+
 function renderMessages(msgs){
   els.messages.innerHTML = '';
   for (var i = 0; i < msgs.length; i++){
@@ -265,10 +314,10 @@ function renderMessages(msgs){
       var ub = addMsg('user'); ub.textContent = m.content;
     } else {
       var ab = addMsg('ai');
-      var html = '';
-      if (m.reasoning) html += '<div class="think">'+renderMarkdownLite(m.reasoning)+'</div>';
-      html += renderMarkdownLite(m.content || '');
-      paintBubble(ab, html);
+      if (m.reasoning) ab.appendChild(buildThinkBlock(m.reasoning, false));
+      var ans = document.createElement('div');
+      ab.appendChild(ans);
+      paintBubble(ans, renderMarkdownLite(m.content || ''));
     }
   }
   els.messages.scrollTop = els.messages.scrollHeight;
@@ -590,7 +639,24 @@ function send(){
 
   var ab = addMsg('ai');
   ab.classList.add('typing');
-  var thinkEl = null, full = '', reasoning = '';
+  var full = '', reasoning = '';
+  var showThink = (modelChoice === 'reasoner');
+  var thinkWrap = null, thinkBody = null, thinkState = null;
+  if (showThink){
+    thinkWrap = document.createElement('details');
+    thinkWrap.className = 'think-box';
+    thinkWrap.open = true;
+    var thinkSum = document.createElement('summary');
+    thinkSum.innerHTML = '<span class="chev">▶</span><span class="tlabel">💡 思考过程</span><span class="tstate">思考中…</span>';
+    thinkWrap.appendChild(thinkSum);
+    thinkBody = document.createElement('div');
+    thinkBody.className = 'think-body typing';
+    thinkWrap.appendChild(thinkBody);
+    thinkState = thinkSum.querySelector('.tstate');
+    ab.appendChild(thinkWrap);
+  }
+  var ansEl = document.createElement('div');
+  ab.appendChild(ansEl);
 
   controller = new AbortController();
   els.send.disabled = true;
@@ -599,7 +665,7 @@ function send(){
   fetch(API_BASE + '/chat/completions', {
     method:'POST',
     headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + key },
-    body: JSON.stringify({ model:MODEL, messages:cur.messages, temperature:TEMP, stream:true }),
+    body: JSON.stringify({ model:currentModel(), messages:cur.messages, temperature:TEMP, stream:true }),
     signal: controller.signal
   }).then(function(r){
     if (!r.ok){ return r.text().then(function(t){ throw new Error('HTTP '+r.status+' '+t.slice(0,200)); }); }
@@ -608,6 +674,7 @@ function send(){
       return reader.read().then(function(res){
         if (res.done){
           ab.classList.remove('typing');
+          if (thinkBody){ thinkBody.classList.remove('typing'); if (thinkState) thinkState.textContent = reasoning ? '已完成' : ''; if (reasoning) thinkWrap.open = false; else if (thinkWrap.parentNode) thinkWrap.parentNode.removeChild(thinkWrap); }
           if (full) cur.messages.push({ role:'assistant', content:full, reasoning:reasoning });
           saveSessions();
           return;
@@ -627,11 +694,8 @@ function send(){
             if (d.content){ full += d.content; }
           } catch(e){ continue; }
         }
-        // 渲染：思考过程 + 正文
-        var html = '';
-        if (reasoning) html += '<div class="think">'+renderMarkdownLite(reasoning)+'</div>';
-        html += renderMarkdownLite(full);
-        paintBubble(ab, html);
+        if (thinkBody && reasoning){ thinkBody.textContent = reasoning; thinkBody.classList.add('typing'); }
+        if (full) paintBubble(ansEl, renderMarkdownLite(full));
         els.messages.scrollTop = els.messages.scrollHeight;
         return pump();
       });
@@ -639,8 +703,15 @@ function send(){
     return pump();
   }).catch(function(err){
     ab.classList.remove('typing');
-    if (err.name === 'AbortError'){ if (full) cur.messages.push({ role:'assistant', content:full, reasoning:reasoning }); saveSessions(); paintBubble(ab, renderMarkdownLite(full)); }
-    else { ab.textContent = '请求失败：' + err.message + '\n（确认 API Key 正确、接口可达）'; }
+    if (err.name === 'AbortError'){
+      if (thinkBody){ thinkBody.textContent = reasoning; thinkBody.classList.remove('typing'); if (thinkState) thinkState.textContent = '已中断'; if (reasoning) thinkWrap.open = false; else if (thinkWrap.parentNode) thinkWrap.parentNode.removeChild(thinkWrap); }
+      if (full) cur.messages.push({ role:'assistant', content:full, reasoning:reasoning });
+      saveSessions();
+      paintBubble(ansEl, renderMarkdownLite(full));
+    } else {
+      if (thinkWrap && thinkWrap.parentNode) thinkWrap.parentNode.removeChild(thinkWrap);
+      ab.textContent = '请求失败：' + err.message + '\n（确认 API Key 正确、接口可达）';
+    }
   }).then(function(){
     controller = null;
     els.send.disabled = false;
